@@ -8,8 +8,6 @@ from game import SnakeGameAI, Direction, Point
 from model import Linear_QNet, QTrainer
 from helper import plot
 
-import time
-
 # Agent() Training params
 MAX_MEMORY      = 100_000
 BATCH_SIZE      = 1000
@@ -17,7 +15,9 @@ BATCH_SIZE      = 1000
 # Agent() Q-learning params   
 ALPHA           = 0.001  # to Adam optimizer for deep-Q-learning... TODO implement ALPHA decay? V3.x
 GAMMA           = 0.9         
-EPSILON         = 0      # TODO implement general decay 
+EPSILON         = 0.4      
+EPSILON_FLOOR   = 0.04
+EPSILON_LIN_DEC = False
 
 # SnakeGameAI() params
 BLOCK_SIZE  = 20         # size of one unit of movement (visual, non-functional) 
@@ -27,17 +27,23 @@ SPEED_FPS   = 200
 
 class Agent:
 
-    def __init__(self, deque_len, train_batch_size, alpha, gamma, epsilon):
+    def __init__(self, deque_len, train_batch_size, alpha, gamma, epsilon, eps_floor, eps_lin_decay):
         self.n_games = 0
         self.memory = deque(maxlen=deque_len)
         self.IN_STATE_LEN = 11   
         self.model = Linear_QNet(input_size=self.IN_STATE_LEN, hidden_size=256, output_size=3)
         self.trainer = QTrainer(self.model, lr=alpha, gamma=gamma)
         self.train_batch_size = train_batch_size
-        # self.epsilon = epsilon 
-        # self.epsilon_decay_floor = 30         
-
-
+        self.eps_lin_decay = eps_lin_decay  # bool for lin decay or exp decay
+        self.n_games_eps_decay = 40
+        if self.eps_lin_decay:
+            self.epsilon = epsilon 
+            # epsilon -= eps_step --> lin decay to eps_floor% after n_games_eps_decay games
+            self.eps_step = (epsilon - eps_floor) / self.n_games_eps_decay   
+        else:
+            self.epsilon = torch.tensor(epsilon, dtype=torch.float16)
+            # epsilon *= eps_step --> exp decay to eps_floor% after n_games_eps_decay games
+            self.eps_step = torch.tensor(np.e**(np.log(eps_floor/epsilon) / self.n_games_eps_decay), dtype=torch.float16)
 
     def get_state(self, game):
         head = game.snake[0]
@@ -115,22 +121,28 @@ class Agent:
                                 np.array(next_states), 
                                 dones)
 
+    # called once every game over
+    def update_epsilon(self):
+        # epsilon-rand: linear/exp decay to eps_floor% after n_games_eps_decay games
+        if (self.n_games < self.n_games_eps_decay):
+            if self.eps_lin_decay: # linear decay 
+                self.epsilon -= self.eps_step  
+            else:
+                self.epsilon *= self.eps_step
+
     # epsilon-greedy action 
-    def get_action(self, state):
-        # epsilon-rand: 40% rand linear decay to 0% rand after 
-        # ...nonlin decay instead? # TODO V2.x 
-        self.epsilon = 80 - self.n_games  
-        final_move = [0,0,0] 
-        if random.randint(0, 200) < self.epsilon:  # exploration
+    def get_action(self, state):        
+        if (torch.rand(1, dtype=torch.float16) < self.epsilon).item():  # exploration
             move = random.randint(0, 2)
-            final_move[move] = 1 # one-hot action
         else:  # exploitation 
             state0 = torch.tensor(state, dtype=torch.float)
             # state (11-dim) --> model --> Q(s) (3-dim)
             prediction = self.model(state0)
             # pick action yielding highest Q 
             move = torch.argmax(prediction).item()
-            final_move[move] = 1 # one-hot action
+        
+        final_move = [0,0,0] 
+        final_move[move] = 1 # one-hot action
 
         return final_move
 
@@ -142,7 +154,8 @@ def train():
     record = 0
     total_num_frames = 0
     agent = Agent(deque_len=MAX_MEMORY, train_batch_size=BATCH_SIZE, 
-                  alpha=ALPHA, gamma=GAMMA, epsilon=EPSILON)
+                  alpha=ALPHA, gamma=GAMMA, 
+                  epsilon=EPSILON, eps_floor=EPSILON_FLOOR, eps_lin_decay=EPSILON_LIN_DEC)
     game = SnakeGameAI(BLOCK_SIZE=BLOCK_SIZE, SPEED=SPEED_FPS)
 
     # input_size should match for QNet
@@ -178,6 +191,9 @@ def train():
             # train long memory, plot result
             game.reset()
             agent.n_games += 1
+            
+            print(agent.epsilon)
+            agent.update_epsilon()
 
             agent.train_long_memory()
 
