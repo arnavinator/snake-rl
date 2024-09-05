@@ -8,31 +8,35 @@ from game import SnakeGameAI, Direction, Point
 from model import Linear_QNet, QTrainer
 from helper import plot
 
-# Training params
+import time
+
+# Agent() Training params
 MAX_MEMORY      = 100_000
 BATCH_SIZE      = 1000
-IN_STATE_LEN    = 11
 
-# Q-learning params
-LR              = 0.001  # to Adam optimizer
-ALPHA           = 1      # unused for Deep-Q-learning, TODO v2.x
+# Agent() Q-learning params   
+ALPHA           = 0.001  # to Adam optimizer for deep-Q-learning... TODO implement ALPHA decay? V3.x
 GAMMA           = 0.9         
-EPSILON         = 0      # unused, currently hard-coded 
+EPSILON         = 0      # TODO implement general decay 
 
-# SnakeGameAI params
-BLOCK_SIZE  = 20
-SPEED       = 40
+# SnakeGameAI() params
+BLOCK_SIZE  = 20         # size of one unit of movement (visual, non-functional) 
+# train_short_memory() + remember() latency = ~0.001s on machine 
+#  --> allow for 0.005s latency per frame 
+SPEED_FPS   = 200  
 
 class Agent:
 
-    def __init__(self):
+    def __init__(self, deque_len, train_batch_size, alpha, gamma, epsilon):
         self.n_games = 0
-        self.epsilon = 0            # set in self.get_action()
-        self.gamma = GAMMA         
-        # if deque len exceeds maxlen, then additional append will popleft()
-        self.memory = deque(maxlen=MAX_MEMORY)
-        self.model = Linear_QNet(input_size=IN_STATE_LEN, hidden_size=256, output_size=3)
-        self.trainer = QTrainer(self.model, lr=LR, gamma=self.gamma)
+        self.memory = deque(maxlen=deque_len)
+        self.IN_STATE_LEN = 11   
+        self.model = Linear_QNet(input_size=self.IN_STATE_LEN, hidden_size=256, output_size=3)
+        self.trainer = QTrainer(self.model, lr=alpha, gamma=gamma)
+        self.train_batch_size = train_batch_size
+        # self.epsilon = epsilon 
+        # self.epsilon_decay_floor = 30         
+
 
 
     def get_state(self, game):
@@ -83,7 +87,7 @@ class Agent:
         return np.array(state, dtype=int)   # convert T/F list to 0/1s
         
         
-    # popleft if MAX_MEMORY is reached --> only remember MAX_MEMORY frames
+    # popleft if deque_len is reached --> only remember deque_len frames
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done)) # deque of tuples
 
@@ -93,9 +97,9 @@ class Agent:
 
     # train BATCH_SIZE when game_over
     def train_long_memory(self):
-        # if len(memory) > BATCH_SIZE, take rand sample for train_long
-        if len(self.memory) > BATCH_SIZE: 
-            mini_sample = random.sample(self.memory, BATCH_SIZE) # list of tuples
+        # if len(memory) > self.train_batch_size, take rand sample for train_long
+        if len(self.memory) > self.train_batch_size: 
+            mini_sample = random.sample(self.memory, self.train_batch_size) # list of tuples
         else:
             mini_sample = self.memory
         
@@ -103,10 +107,13 @@ class Agent:
         #   into (BATCH_SIZE, {original len})
         states, actions, rewards, next_states, dones = zip(*mini_sample)
         
-        # train on BATCH_SIZE sample
-        self.trainer.train_step(states, actions, rewards, next_states, dones)
-        #for state, action, reward, next_state, done in mini_sample:
-        #    self.trainer.train_step(state, action, reward, next_state, done)
+        # train on BATCH_SIZE sample. 
+        #   convert list of nparray to single nparray, faster tensor conversion
+        self.trainer.train_step(np.array(states), 
+                                np.array(actions),
+                                np.array(rewards), 
+                                np.array(next_states), 
+                                dones)
 
     # epsilon-greedy action 
     def get_action(self, state):
@@ -133,16 +140,23 @@ def train():
     plot_mean_scores = []
     total_score = 0
     record = 0
-    agent = Agent()
-    game = SnakeGameAI(BLOCK_SIZE=BLOCK_SIZE, SPEED=SPEED)
+    total_num_frames = 0
+    agent = Agent(deque_len=MAX_MEMORY, train_batch_size=BATCH_SIZE, 
+                  alpha=ALPHA, gamma=GAMMA, epsilon=EPSILON)
+    game = SnakeGameAI(BLOCK_SIZE=BLOCK_SIZE, SPEED=SPEED_FPS)
 
     # input_size should match for QNet
-    assert len(agent.get_state(game)) == IN_STATE_LEN  
+    assert len(agent.get_state(game)) == agent.IN_STATE_LEN  
 
-    while not game.quit:
+    # init current_state
+    current_state = agent.get_state(game)
+
+    while (not game.quit) and (agent.n_games <= 100):
+        total_num_frames += 1
+
         # get current state
-        # ... should just remember from prev iter... # FIXME V2.x
-        current_state = agent.get_state(game)
+        if current_state is None:
+            current_state = agent.get_state(game)
 
         # Q-learning epsilon-greedy move prediction
         new_move = agent.get_action(current_state)
@@ -157,18 +171,21 @@ def train():
         # remember, for train_long_memory()
         agent.remember(current_state, new_move, reward, new_state, done)
 
+        # for next iter in game (no need to recalc current_state)
+        current_state = new_state
+
         if done:  # aka game_over
             # train long memory, plot result
             game.reset()
             agent.n_games += 1
-            # TODO V2.x - instead of train from replay every game, do it 
-            # min_iter(every game, 50 iters)... depends on train latency 
-            # OR could have train in parallel, newest Q-Net replace old once done
+
             agent.train_long_memory()
 
             if score > record:
                 record = score
                 agent.model.save()
+
+            current_state = None
 
             print('Game', agent.n_games, 'Score', score, 'Record:', record)
 
@@ -178,7 +195,9 @@ def train():
             plot_mean_scores.append(mean_score)
             plot(plot_scores, plot_mean_scores)
     
-    print("Training Over. Close Figure 1 to terminate program")
+    print("Total Number of Frames: ", total_num_frames)
+    print("Total Number of Games:  ", agent.n_games)
+    print("Training Over. Close Plot to terminate program")
     plot(plot_scores, plot_mean_scores, show_final=True)
 
 
