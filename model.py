@@ -30,11 +30,11 @@ class Linear_QNet(nn.Module):
 
 
 class QTrainer:
-    def __init__(self, model, lr, gamma):
-        self.lr = lr
+    def __init__(self, model, alpha, gamma):
+        self.alpha = alpha
         self.gamma = gamma
         self.model = model
-        self.optimizer = optim.Adam(model.parameters(), lr=self.lr)
+        self.optimizer = optim.Adam(model.parameters(), lr=self.alpha)
         self.criterion = nn.MSELoss()
 
     def train_step(self, state, action, reward, next_state, done):
@@ -71,9 +71,8 @@ class QTrainer:
             target[idx][torch.argmax(action[idx]).item()] = Q_new
     
         self.optimizer.zero_grad()
-        loss = self.criterion(target, pred)  # print the loss ? FIXME V2.x
-        loss.backward() 
-
+        self.loss = self.criterion(target, pred)  
+        self.loss.backward() 
         self.optimizer.step()
 
 

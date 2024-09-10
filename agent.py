@@ -33,13 +33,12 @@ BLOCK_SIZE  = 20         # size of one unit of movement (visual, non-functional)
 SPEED_FPS   = 200  
 
 class Agent:
-
     def __init__(self, deque_len, train_batch_size, alpha, gamma, epsilon, eps_floor, eps_lin_decay, eps_dec_lim):
         self.n_games = 0
         self.memory = deque(maxlen=deque_len)
         self.IN_STATE_LEN = 11   
         self.model = Linear_QNet(input_size=self.IN_STATE_LEN, hidden_size=256, output_size=3)
-        self.trainer = QTrainer(self.model, lr=alpha, gamma=gamma)
+        self.trainer = QTrainer(self.model, alpha=alpha, gamma=gamma)
         self.train_batch_size = train_batch_size
         self.eps_lin_decay = eps_lin_decay  # bool for lin decay or exp decay
         self.n_games_eps_decay = eps_dec_lim
@@ -169,6 +168,7 @@ class AgentTrainer:
         self.track_efficiency = []
         self.record = 0
         self.total_num_frames = 0
+        self.model_loss = []
         self.agent = Agent(deque_len, train_batch_size, alpha, gamma, epsilon, 
                            eps_floor, eps_lin_decay, eps_dec_lim)
         self.game = SnakeGameAI(BLOCK_SIZE=block_sz, SPEED=speed_fps)
@@ -191,7 +191,7 @@ class AgentTrainer:
         frame_checkpoint = 0
         ideal_frame_cnt = self.find_frame_goal()
 
-        while (not self.game.quit) and (self.agent.n_games < 30):
+        while (not self.game.quit) and (self.agent.n_games < 120):
             # get current state
             if current_state is None:
                 current_state = self.agent.get_state(self.game)
@@ -235,13 +235,15 @@ class AgentTrainer:
                     if interactive_mode:
                         self.agent.model.save()
 
+                loss = self.agent.trainer.loss.item()
                 if interactive_mode:
-                    print('Game', self.agent.n_games, 'Score', score, 'Record:', self.record)
+                    print('Game:', self.agent.n_games, '\tScore:', score, '\tRecord:', self.record, '\tReplay Loss:', round(loss, 4))
                 
                 # --- update plot metrics --- 
                 self.track_scores.append(score)
                 score_slice = self.track_scores[-5:]  # 5-game simple moving avg
                 self.track_ma_scores.append(sum(score_slice) / len(score_slice))
+                self.model_loss.append(loss)
                 if score == 0 or (frame_checkpoint-start_frame_count == 0):  # clamp in case food spawn at head --> divby0
                     efficiency = 0
                 else:
@@ -270,6 +272,7 @@ class AgentTrainer:
             print("Stdev(Last 20 Games Length):                       ", np.std(self.track_scores[-20:]) )
             print("Mean(Efficiency Score(Last 20 Games Length)):      ", np.mean(self.track_efficiency[-20:]) )
             print("Stdev(Efficiency Score(Last 20 Games Length)):     ", np.std(self.track_efficiency[-20:]) )
+            print("Mean(QNet Replay Loss(Last 10 games)):             ", np.mean(self.model_loss[-10:]))
             print("Training Over. Close Plot to terminate program.")
             plot(self.track_scores, self.track_ma_scores, self.track_efficiency, show_final=True)
         else:
@@ -286,6 +289,7 @@ class AgentTrainer:
             results["Data: Length per Game"] = self.track_scores
             results["Data: 5-game Length Moving Average"] = self.track_ma_scores
             results["Data: Efficiency Score"] = self.track_efficiency
+            results["Data: QNet Replay Loss"] = self.model_loss
 
             return results
 
