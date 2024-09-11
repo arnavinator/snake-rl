@@ -27,14 +27,16 @@ BLACK = (0,0,0)
 
 class SnakeGameAI:
 
-    def __init__(self, w=640, h=480, BLOCK_SIZE=20, SPEED=40):
+    def __init__(self, w=640, h=480, BLOCK_SIZE=20, SPEED=40, interactive_mode=False):
         self.w = w                      # game width
         self.h = h                      # game height
         self.BLOCK_SIZE = BLOCK_SIZE    # dist for one move
         self.SPEED = SPEED              # game speed
         # init display
-        self.display = pygame.display.set_mode((self.w, self.h))
-        pygame.display.set_caption('Snake')
+        self.interactive_mode = interactive_mode
+        if self.interactive_mode:
+            self.display = pygame.display.set_mode((self.w, self.h))
+            pygame.display.set_caption('Snake')
         self.clock = pygame.time.Clock()
         self.quit = False
         self.reset()
@@ -65,27 +67,28 @@ class SnakeGameAI:
             self._place_food()
 
 
-    def play_step(self, action, interactive_mode):
+    def play_step(self, action):
         self.frame_iteration += 1
         # 1. collect user input
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                self.quit = True
-                # pygame.display.quit()
-                # quit()
+        if self.interactive_mode:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.quit = True
+                    # pygame.display.quit()
+                    # quit()
 
-            # from snake_game_human.py, not used here 
-            """ ---- COMMENT OUT ---- 
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_LEFT:
-                    self.direction = Direction.LEFT
-                elif event.key == pygame.K_RIGHT:
-                    self.direction = Direction.RIGHT
-                elif event.key == pygame.K_UP:
-                    self.direction = Direction.UP
-                elif event.key == pygame.K_DOWN:
-                    self.direction = Direction.DOWN
-            """
+                # from snake_game_human.py, not used here 
+                """ ---- COMMENT OUT ---- 
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_LEFT:
+                        self.direction = Direction.LEFT
+                    elif event.key == pygame.K_RIGHT:
+                        self.direction = Direction.RIGHT
+                    elif event.key == pygame.K_UP:
+                        self.direction = Direction.UP
+                    elif event.key == pygame.K_DOWN:
+                        self.direction = Direction.DOWN
+                """
         
         # 2. move
         #   decode 3-state action vector, update the self.head tuple
@@ -114,7 +117,7 @@ class SnakeGameAI:
             self.snake.pop()  
         
         # 5. update ui and clock
-        if interactive_mode:
+        if self.interactive_mode:
             self._update_ui()
         self.clock.tick(self.SPEED)  # limit to run at self.SPEED FPS
         # 6. return game over and score

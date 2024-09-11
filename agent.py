@@ -35,13 +35,20 @@ SPEED_FPS   = 200
 class Agent:
     def __init__(self, deque_len, train_batch_size, alpha, gamma, epsilon, eps_floor, eps_lin_decay, eps_dec_lim):
         self.n_games = 0
-        self.memory = deque(maxlen=deque_len)
-        self.IN_STATE_LEN = 11   
-        self.model = Linear_QNet(input_size=self.IN_STATE_LEN, hidden_size=256, output_size=3)
-        self.trainer = QTrainer(self.model, alpha=alpha, gamma=gamma)
+        self.deque_len = deque_len
+        self.alpha = alpha
+        self.gamma = gamma
+        self.epsilon_full = epsilon 
+        self.eps_floor = eps_floor
         self.train_batch_size = train_batch_size
         self.eps_lin_decay = eps_lin_decay  # bool for lin decay or exp decay
         self.n_games_eps_decay = eps_dec_lim
+        self.IN_STATE_LEN = 11   
+
+        self.memory = deque(maxlen=deque_len)
+        self.model = Linear_QNet(input_size=self.IN_STATE_LEN, hidden_size=256, output_size=3)
+        self.trainer = QTrainer(self.model, alpha=alpha, gamma=gamma)
+        
         if self.eps_lin_decay:
             self.epsilon = epsilon 
             # epsilon -= eps_step --> lin decay to eps_floor% after n_games_eps_decay games
@@ -49,7 +56,12 @@ class Agent:
         else:
             self.epsilon = torch.tensor(epsilon, dtype=torch.float16)
             # epsilon *= eps_step --> exp decay to eps_floor% after n_games_eps_decay games
-            self.eps_step = torch.tensor(np.e**(np.log(eps_floor/epsilon) / self.n_games_eps_decay), dtype=torch.float16)
+            self.eps_step = torch.tensor(np.e**(np.log((eps_floor+1e-5)/epsilon) / self.n_games_eps_decay), dtype=torch.float16)
+
+    def __repr__(self):
+        return f"Agent(MAX_MEMORY={self.deque_len}, BATCH_SIZE={self.train_batch_size}, ALPHA={self.alpha}, " \
+                     f"GAMMA={self.gamma}, EPSILON={self.epsilon_full}, EPSILON_FLOOR={self.eps_floor}, " \
+                     f"EPSILON_LIN_DEC={self.eps_lin_decay}, EPSILON_DEC_LIM={self.n_games_eps_decay})"
 
     def get_state(self, game):
         head = game.snake[0]
@@ -156,13 +168,14 @@ class AgentTrainer:
     def __init__(self, deque_len=MAX_MEMORY, train_batch_size=BATCH_SIZE, 
                     alpha=ALPHA, gamma=GAMMA, epsilon=EPSILON, 
                     eps_floor=EPSILON_FLOOR, eps_lin_decay=EPSILON_LIN_DEC, eps_dec_lim=EPSILON_DEC_LIM,
-                    block_sz=BLOCK_SIZE, speed_fps=SPEED_FPS):
+                    block_sz=BLOCK_SIZE, speed_fps=SPEED_FPS, interactive_mode=False):
         # set random seed
         seed = 1298734123
         random.seed(seed)            
         np.random.seed(seed)      
         torch.manual_seed(seed) 
 
+        self.interactive_mode = interactive_mode  # enables live plot, model save, print statements
         self.track_scores = []
         self.track_ma_scores = []
         self.track_efficiency = []
@@ -171,10 +184,13 @@ class AgentTrainer:
         self.model_loss = []
         self.agent = Agent(deque_len, train_batch_size, alpha, gamma, epsilon, 
                            eps_floor, eps_lin_decay, eps_dec_lim)
-        self.game = SnakeGameAI(BLOCK_SIZE=block_sz, SPEED=speed_fps)
+        self.game = SnakeGameAI(BLOCK_SIZE=block_sz, SPEED=speed_fps, interactive_mode=interactive_mode)
 
         # input_size should match for QNet
         assert len(self.agent.get_state(self.game)) == self.agent.IN_STATE_LEN  
+    
+    def __repr__(self):
+        return str(self.agent)
 
     def find_frame_goal(self): 
         m_x_dist = np.abs(self.game.food.x - self.game.head.x)//self.game.BLOCK_SIZE # manhattan x-dist to food
@@ -182,13 +198,14 @@ class AgentTrainer:
         golden_frame_cnt = m_x_dist + m_y_dist
         return golden_frame_cnt
 
-    def train(self, interactive_mode=True):   # interactive_mode enables live plot, model save, print statements
+    def train(self):    
         # init current_state
         current_state = self.agent.get_state(self.game)
 
         # init for track_efficiency 
         prev_score = 0
         frame_checkpoint = 0
+        start_frame_count = 0
         ideal_frame_cnt = self.find_frame_goal()
 
         while (not self.game.quit) and (self.agent.n_games < 120):
@@ -200,7 +217,7 @@ class AgentTrainer:
             new_move = self.agent.get_action(current_state)
 
             # perform move and get new state
-            reward, done, score = self.game.play_step(new_move, interactive_mode)
+            reward, done, score = self.game.play_step(new_move)
             new_state = self.agent.get_state(self.game)
 
             # train short memory (every frame)
@@ -232,11 +249,11 @@ class AgentTrainer:
 
                 if score > self.record:
                     self.record = score
-                    if interactive_mode:
+                    if self.interactive_mode:
                         self.agent.model.save()
 
                 loss = self.agent.trainer.loss.item()
-                if interactive_mode:
+                if self.interactive_mode:
                     print('Game:', self.agent.n_games, '\tScore:', score, '\tRecord:', self.record, '\tReplay Loss:', round(loss, 4))
                 
                 # --- update plot metrics --- 
@@ -253,7 +270,7 @@ class AgentTrainer:
                     efficiency = (success_ideal_frame_cnt + score) / (frame_checkpoint - start_frame_count) # 0 (bad) --> ~1 (good)
                 self.track_efficiency.append(efficiency)
 
-                if interactive_mode:
+                if self.interactive_mode:
                     plot(self.track_scores, self.track_ma_scores, self.track_efficiency)
 
                 # for next game
@@ -263,7 +280,7 @@ class AgentTrainer:
                 ideal_frame_cnt = self.find_frame_goal()
         
         # training complete 
-        if interactive_mode:
+        if self.interactive_mode:
             print("Total Number of Frames:                            ",self.total_num_frames)
             print("Total Number of Games:                             ", self.agent.n_games)
             print("Record Length:                                     ", self.record)
@@ -285,16 +302,16 @@ class AgentTrainer:
             results["Stdev(Last 20 Games Length)"]                      = np.std(self.track_scores[-20:])
             results["Mean(Efficiency Score(Last 20 Games Length))"]     = np.mean(self.track_efficiency[-20:])
             results["Stdev(Efficiency Score(Last 20 Games Length))"]    = np.std(self.track_efficiency[-20:])
-            # in case want to plot results 
-            results["Data: Length per Game"] = self.track_scores
-            results["Data: 5-game Length Moving Average"] = self.track_ma_scores
-            results["Data: Efficiency Score"] = self.track_efficiency
-            results["Data: QNet Replay Loss"] = self.model_loss
+            # # in case want to plot results 
+            # results["Data: Length per Game"] = self.track_scores
+            # results["Data: 5-game Length Moving Average"] = self.track_ma_scores
+            # results["Data: Efficiency Score"] = self.track_efficiency
+            # results["Data: QNet Replay Loss"] = self.model_loss
 
             return results
 
 
 
 if __name__ == '__main__':
-    agent_trainer = AgentTrainer()
-    agent_trainer.train(interactive_mode=True)
+    agent_trainer = AgentTrainer(interactive_mode=True)
+    agent_trainer.train()
