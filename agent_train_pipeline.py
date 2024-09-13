@@ -32,7 +32,7 @@ results = {}
 # Iterate over each combination and feed it to the model
 max_workers = 16
 with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-    for i in range(0, max_workers, max_workers):           # FIXME len(combinations)
+    for i in range(0, len(combinations), max_workers):          
         comb_batch = combinations[i:i+max_workers] 
         print(f"Progress: {i}:{i+len(comb_batch)}/{total}")
         # convert each comb to dict ({'MAX_MEMORY' : val, ...})
