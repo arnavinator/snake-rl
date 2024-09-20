@@ -3,21 +3,20 @@ import itertools
 import concurrent.futures
 import pickle
 
-
-
 # hyperparams to explore
 hyperparams = {
-    'MAX_MEMORY'      : [50_000, 100_000, 200_000],
-    'BATCH_SIZE'      : [1000, 5000],
-    'ALPHA'           : [0.0005, 0.001, 0.005],
-    'GAMMA'           : [0.7, 0.8, 0.9],
-    'EPSILON'         : [0.3, 0.4, 0.5],    
-    'EPSILON_FLOOR'   : [0.0, 0.04],          # minimal epsilon value after decay
-    'EPSILON_LIN_DEC' : [True, False],        # epsilon decay is linear or exp
-    'EPSILON_DEC_LIM' : [70, 80, 90],         # number of games until minimal epsilon
+    'MAX_MEMORY'      : [5_000, 10_000],    # 10k: remember ~15-20 games
+    'BATCH_SIZE'      : [500, 1000],
+    'ALPHA'           : [0.001],
+    'ALPHA_DECAY'     : [True, False],
+    'GAMMA'           : [0.7],
+    'EPSILON'         : [0.3, 0.4],    
+    'EPSILON_FLOOR'   : [0.0],              # minimal epsilon value after decay
+    'EPSILON_LIN_DEC' : [False],            # epsilon decay is linear or exp
+    'EPSILON_DEC_LIM' : [60, 80],           # number of games until minimal epsilon
+    'PRI_REPLAY_EN'   : [True, False],      # priority replay buffer at end of every episode
 }
 
-# print(hyperparams.items())
 total = 1
 for k, v in hyperparams.items():
     total *= len(v)
@@ -30,9 +29,9 @@ combinations = list(itertools.product(*v))
 results = {}
 
 # Iterate over each combination and feed it to the model
-max_workers = 16
+max_workers = 2
 with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-    for i in range(0, len(combinations), max_workers):          
+    for i in range(0, len(combinations), max_workers):   
         comb_batch = combinations[i:i+max_workers] 
         print(f"Progress: {i}:{i+len(comb_batch)}/{total}")
         # convert each comb to dict ({'MAX_MEMORY' : val, ...})
@@ -46,14 +45,16 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                     deque_len=h_comb['MAX_MEMORY'], 
                     train_batch_size=h_comb['BATCH_SIZE'], 
                     alpha=h_comb['ALPHA'], 
+                    alpha_decay=h_comb['ALPHA_DECAY'], 
                     gamma=h_comb['GAMMA'], 
                     epsilon=h_comb['EPSILON'], 
                     eps_floor=h_comb['EPSILON_FLOOR'], 
                     eps_lin_decay=h_comb['EPSILON_LIN_DEC'], 
-                    eps_dec_lim=h_comb['EPSILON_DEC_LIM']
+                    eps_dec_lim=h_comb['EPSILON_DEC_LIM'],
+                    pri_replay_en=h_comb['PRI_REPLAY_EN']
                 )
             )
-        
+
         # Submit tasks to the executor --> run max_workers train() in parallel
         # returned dict is stored in tasks[i].result()
         tasks = {executor.submit(a_t.train): a_t for a_t in agent_trainers}
@@ -67,7 +68,7 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 results[str(agent_t)] = result
             except Exception as e:
                 print(f"  {str(agent_t)} generated an exception: {e}")
-
+        
 print("All results saved to results.pkl")
 with open('results.pkl', 'wb') as pickle_file:
     pickle.dump(results, pickle_file)

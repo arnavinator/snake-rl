@@ -15,16 +15,18 @@ from helper import plot
 # torch.manual_seed(seed) 
 
 # Agent() Training params
-MAX_MEMORY      = 100_000
-BATCH_SIZE      = 1000
+MAX_MEMORY      = 10_000
+BATCH_SIZE      = 512
 
 # Agent() Q-learning params   
-ALPHA           = 0.001  # to Adam optimizer for deep-Q-learning... TODO implement ALPHA decay? V3.x
+ALPHA           = 0.001  # to Adam optimizer for deep-Q-learning
+ALPHA_DECAY     = False
 GAMMA           = 0.9         
 EPSILON         = 0.4    
 EPSILON_FLOOR   = 0.00   # minimal epsilon value after decay
 EPSILON_LIN_DEC = True   # epsilon decay is linear or exp
 EPSILON_DEC_LIM = 80     # number of games until minimal epsilon
+PRI_REPLAY_EN   = False  # priority replay buffer at end of every episode
 
 # SnakeGameAI() params
 BLOCK_SIZE  = 20         # size of one unit of movement (visual, non-functional) 
@@ -33,10 +35,11 @@ BLOCK_SIZE  = 20         # size of one unit of movement (visual, non-functional)
 SPEED_FPS   = 200  
 
 class Agent:
-    def __init__(self, deque_len, train_batch_size, alpha, gamma, epsilon, eps_floor, eps_lin_decay, eps_dec_lim):
+    def __init__(self, deque_len, train_batch_size, alpha, alpha_decay, gamma, epsilon, eps_floor, eps_lin_decay, eps_dec_lim):
         self.n_games = 0
         self.deque_len = deque_len
         self.alpha = alpha
+        self.alpha_decay = alpha_decay
         self.gamma = gamma
         self.epsilon_full = epsilon 
         self.eps_floor = eps_floor
@@ -47,7 +50,7 @@ class Agent:
 
         self.memory = deque(maxlen=deque_len)
         self.model = Linear_QNet(input_size=self.IN_STATE_LEN, hidden_size=256, output_size=3)
-        self.trainer = QTrainer(self.model, alpha=alpha, gamma=gamma)
+        self.trainer = QTrainer(self.model, alpha=alpha, alpha_decay=alpha_decay, gamma=gamma)
         
         if self.eps_lin_decay:
             self.epsilon = epsilon 
@@ -59,7 +62,7 @@ class Agent:
             self.eps_step = torch.tensor(np.e**(np.log((eps_floor+1e-5)/epsilon) / self.n_games_eps_decay), dtype=torch.float16)
 
     def __repr__(self):
-        return f"Agent(MAX_MEMORY={self.deque_len}, BATCH_SIZE={self.train_batch_size}, ALPHA={self.alpha}, " \
+        return f"Agent(MAX_MEMORY={self.deque_len}, BATCH_SIZE={self.train_batch_size}, ALPHA={self.alpha}, ALPHA_DECAY={self.alpha_decay}, " \
                      f"GAMMA={self.gamma}, EPSILON={self.epsilon_full}, EPSILON_FLOOR={self.eps_floor}, " \
                      f"EPSILON_LIN_DEC={self.eps_lin_decay}, EPSILON_DEC_LIM={self.n_games_eps_decay})"
 
@@ -138,6 +141,28 @@ class Agent:
                                 np.array(rewards), 
                                 np.array(next_states), 
                                 dones)
+        
+    # train BATCH_SIZE when game_over, with priority to end frames
+    def train_priority_long_memory(self, n_end_frames):
+        end_frames = [self.memory[i] for i in range(-n_end_frames, 0)]  # make sure last 5 frames are used
+        # if len(memory) > self.train_batch_size-n_end_frames, take rand sample for train_long
+        if len(self.memory) > (self.train_batch_size-n_end_frames): 
+            mini_sample = random.sample(self.memory, (self.train_batch_size-n_end_frames)) # list of tuples
+            mini_sample += end_frames   # concatenate to make mini_sample
+        else:
+            mini_sample = self.memory
+        
+        # group together all (states, ..., dones) from mini_sample
+        #   into (BATCH_SIZE, {original len})
+        states, actions, rewards, next_states, dones = zip(*mini_sample)
+        
+        # train on BATCH_SIZE sample. 
+        #   convert list of nparray to single nparray, faster tensor conversion
+        self.trainer.train_step(np.array(states), 
+                                np.array(actions),
+                                np.array(rewards), 
+                                np.array(next_states), 
+                                dones)
 
     # called once every game over
     def update_epsilon(self):
@@ -166,9 +191,9 @@ class Agent:
 
 class AgentTrainer:
     def __init__(self, deque_len=MAX_MEMORY, train_batch_size=BATCH_SIZE, 
-                    alpha=ALPHA, gamma=GAMMA, epsilon=EPSILON, 
+                    alpha=ALPHA, alpha_decay=ALPHA_DECAY, gamma=GAMMA, epsilon=EPSILON, 
                     eps_floor=EPSILON_FLOOR, eps_lin_decay=EPSILON_LIN_DEC, eps_dec_lim=EPSILON_DEC_LIM,
-                    block_sz=BLOCK_SIZE, speed_fps=SPEED_FPS, interactive_mode=False):
+                    pri_replay_en=PRI_REPLAY_EN, block_sz=BLOCK_SIZE, speed_fps=SPEED_FPS, interactive_mode=False):
         # set random seed
         seed = 1298734123
         random.seed(seed)            
@@ -182,15 +207,15 @@ class AgentTrainer:
         self.record = 0
         self.total_num_frames = 0
         self.model_loss = []
-        self.agent = Agent(deque_len, train_batch_size, alpha, gamma, epsilon, 
+        self.agent = Agent(deque_len, train_batch_size, alpha, alpha_decay, gamma, epsilon, 
                            eps_floor, eps_lin_decay, eps_dec_lim)
         self.game = SnakeGameAI(BLOCK_SIZE=block_sz, SPEED=speed_fps, interactive_mode=interactive_mode)
-
+        self.pri_replay_en = pri_replay_en
         # input_size should match for QNet
         assert len(self.agent.get_state(self.game)) == self.agent.IN_STATE_LEN  
     
     def __repr__(self):
-        return str(self.agent)
+        return str(self.agent)[:-1] + f", PRI_REPLAY_EN={self.pri_replay_en})"
 
     def find_frame_goal(self): 
         m_x_dist = np.abs(self.game.food.x - self.game.head.x)//self.game.BLOCK_SIZE # manhattan x-dist to food
@@ -220,11 +245,14 @@ class AgentTrainer:
             reward, done, score = self.game.play_step(new_move)
             new_state = self.agent.get_state(self.game)
 
-            # train short memory (every frame)
-            self.agent.train_short_memory(current_state, new_move, reward, new_state, done)
+            # train short memory (every frame) # deprecated
+            # self.agent.train_short_memory(current_state, new_move, reward, new_state, done)
 
             # remember, for train_long_memory()
             self.agent.remember(current_state, new_move, reward, new_state, done)
+
+            if self.total_num_frames % 4 == 0:
+                self.agent.train_long_memory()
 
             # for next iter in game (no need to recalc current_state)
             current_state = new_state
@@ -245,7 +273,10 @@ class AgentTrainer:
 
                 self.agent.update_epsilon()
 
-                self.agent.train_long_memory()
+                if self.pri_replay_en:
+                    self.agent.train_priority_long_memory(n_end_frames=4)
+
+                self.agent.trainer.step_alpha_scheduler()
 
                 if score > self.record:
                     self.record = score
