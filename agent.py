@@ -32,7 +32,7 @@ PRI_REPLAY_EN   = False  # priority replay buffer at end of every episode
 BLOCK_SIZE  = 20         # size of one unit of movement (visual, non-functional) 
 # train_short_memory() + remember() latency = ~0.001s on machine 
 #  --> allow for 0.005s latency per frame 
-SPEED_FPS   = 200  
+SPEED_FPS   = 1  
 
 class Agent:
     def __init__(self, deque_len, train_batch_size, alpha, alpha_decay, gamma, epsilon, eps_floor, eps_lin_decay, eps_dec_lim):
@@ -65,6 +65,44 @@ class Agent:
         return f"Agent(MAX_MEMORY={self.deque_len}, BATCH_SIZE={self.train_batch_size}, ALPHA={self.alpha}, ALPHA_DECAY={self.alpha_decay}, " \
                      f"GAMMA={self.gamma}, EPSILON={self.epsilon_full}, EPSILON_FLOOR={self.eps_floor}, " \
                      f"EPSILON_LIN_DEC={self.eps_lin_decay}, EPSILON_DEC_LIM={self.n_games_eps_decay})"
+    
+    def danger_dir(self, game, relative_danger_dir, num_blocks_visibility):
+        # neuron input between -0.75 to 0.75, where
+        # -0.75      --> no danger               (lowest priority)
+        # -0.75+step --> danger is dist_from_curr units away
+        # ...
+        # 0.75       --> danger is 1 unit away   (highest priority)
+
+        # initalize possible Q-Net input values
+        danger_vals = np.linspace(0.75, -0.75, num=(num_blocks_visibility+1))
+
+        # translate relative_danger_dir to abs_danger_dir (compass direction)
+        curr_comp_dir = game.direction
+        clockwise_dir = [Direction.RIGHT, Direction.DOWN, Direction.LEFT, Direction.UP]
+        curr_idx = clockwise_dir.index(curr_comp_dir)
+        if relative_danger_dir == "S":    # compass dir of danger Straight relative to curr_comp_dir
+            abs_danger_dir = curr_comp_dir
+        elif relative_danger_dir == "R":  # compass dir of danger Right relative to curr_comp_dir
+            abs_danger_dir = clockwise_dir[((curr_idx + 1) % 4)]
+        elif relative_danger_dir == "L":  # compass dir of danger Left relative to curr_comp_dir
+            abs_danger_dir = clockwise_dir[((curr_idx - 1) % 4)]
+        
+        head = game.snake[0]
+
+        # assign danger_vals
+        for i in range(1,num_blocks_visibility+1):
+            if abs_danger_dir == Direction.LEFT:
+                danger_point = Point(head.x - BLOCK_SIZE*i, head.y)
+            elif abs_danger_dir == Direction.RIGHT:
+                danger_point = Point(head.x + BLOCK_SIZE*i, head.y)
+            elif abs_danger_dir == Direction.UP:
+                danger_point = Point(head.x, head.y - BLOCK_SIZE*i)
+            elif abs_danger_dir == Direction.DOWN:
+                danger_point = Point(head.x, head.y + BLOCK_SIZE*i)
+
+            if game.is_collision(danger_point):
+                return danger_vals[i-1]
+        return danger_vals[-1]
 
     def get_state(self, game):
         head = game.snake[0]
@@ -110,9 +148,34 @@ class Agent:
             game.food.y < game.head.y,  # food up
             game.food.y > game.head.y  # food down
             ]
+        ##### 
+        print(np.array(state, dtype=int)[0:3])
+        num_blocks_visibility = 1
+        state = [ 
+            # snake only finds out danger one block away... TODO V2.x  
+            # Danger straight 
+            self.danger_dir(game, "S", num_blocks_visibility),
+            # Danger right
+            self.danger_dir(game, "R", num_blocks_visibility),
+            # Danger left
+            self.danger_dir(game, "L", num_blocks_visibility),
 
+            # Move direction (only 1 is true)
+            dir_l,
+            dir_r,
+            dir_u,
+            dir_d,
+            
+            # Food location (only 1-2 are true)
+            game.food.x < game.head.x,  # food left
+            game.food.x > game.head.x,  # food right
+            game.food.y < game.head.y,  # food up
+            game.food.y > game.head.y  # food down
+        ]
+        print(np.array(state, dtype=float)[0:3])
+
+        #####
         return np.array(state, dtype=int)   # convert T/F list to 0/1s
-        
         
     # popleft if deque_len is reached --> only remember deque_len frames
     def remember(self, state, action, reward, next_state, done):
