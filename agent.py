@@ -32,7 +32,7 @@ PRI_REPLAY_EN   = False  # priority replay buffer at end of every episode
 BLOCK_SIZE  = 20         # size of one unit of movement (visual, non-functional) 
 # train_short_memory() + remember() latency = ~0.001s on machine 
 #  --> allow for 0.005s latency per frame 
-SPEED_FPS   = 1  
+SPEED_FPS   = 3  
 
 class Agent:
     def __init__(self, deque_len, train_batch_size, alpha, alpha_decay, gamma, epsilon, eps_floor, eps_lin_decay, eps_dec_lim):
@@ -46,7 +46,7 @@ class Agent:
         self.train_batch_size = train_batch_size
         self.eps_lin_decay = eps_lin_decay  # bool for lin decay or exp decay
         self.n_games_eps_decay = eps_dec_lim
-        self.IN_STATE_LEN = 11   
+        self.IN_STATE_LEN = 5   
 
         self.memory = deque(maxlen=deque_len)
         self.model = Linear_QNet(input_size=self.IN_STATE_LEN, hidden_size=256, output_size=3)
@@ -103,79 +103,92 @@ class Agent:
             if game.is_collision(danger_point):
                 return danger_vals[i-1]
         return danger_vals[-1]
+    
+    def enc_food(self, food, head):
+        fl = food.x < head.x  # food left
+        fr = food.x > head.x  # food right
+        fu = food.y < head.y  # food up
+        fd = food.y > head.y  # food down
+
+        food_list = [fu, fr, fd, fl, fu]
+        food_enc = np.linspace(-0.7, 0.7, num=8)
+        # find first idx that is 1
+        # then see if next one is 1
+        # linspace idx is pure idx*2 (+1 if adj)
+        
+        if fl and fu: # handle wrap-around case
+            idx = 7
+            return food_enc[idx]
+        
+        for i in range(len(food_list)-1):   # else
+            if food_list[i]:
+                idx = i*2
+                if food_list[i+1]:
+                    idx += 1
+                return food_enc[idx]
+        print("ERROR: no food found while self.enc_food() called. Aborting.")
+        exit()
 
     def get_state(self, game):
-        head = game.snake[0]
-        point_l = Point(head.x - BLOCK_SIZE, head.y)
-        point_r = Point(head.x + BLOCK_SIZE, head.y)
-        point_u = Point(head.x, head.y - BLOCK_SIZE)
-        point_d = Point(head.x, head.y + BLOCK_SIZE)
+        # head = game.snake[0]
+        # point_l = Point(head.x - BLOCK_SIZE, head.y)
+        # point_r = Point(head.x + BLOCK_SIZE, head.y)
+        # point_u = Point(head.x, head.y - BLOCK_SIZE)
+        # point_d = Point(head.x, head.y + BLOCK_SIZE)
         
-        dir_l = game.direction == Direction.LEFT
-        dir_r = game.direction == Direction.RIGHT
-        dir_u = game.direction == Direction.UP
-        dir_d = game.direction == Direction.DOWN
+        # dir_l = game.direction == Direction.LEFT
+        # dir_r = game.direction == Direction.RIGHT
+        # dir_u = game.direction == Direction.UP
+        # dir_d = game.direction == Direction.DOWN
 
-        state = [ 
-            # snake only finds out danger one block away... TODO V2.x  
-            # Danger straight 
-            (dir_r and game.is_collision(point_r)) or 
-            (dir_l and game.is_collision(point_l)) or 
-            (dir_u and game.is_collision(point_u)) or 
-            (dir_d and game.is_collision(point_d)),
+        # state = [ 
+        #     # snake only finds out danger one block away... TODO V2.x  
+        #     # Danger straight 
+        #     (dir_r and game.is_collision(point_r)) or 
+        #     (dir_l and game.is_collision(point_l)) or 
+        #     (dir_u and game.is_collision(point_u)) or 
+        #     (dir_d and game.is_collision(point_d)),
 
-            # Danger right
-            (dir_u and game.is_collision(point_r)) or 
-            (dir_d and game.is_collision(point_l)) or 
-            (dir_l and game.is_collision(point_u)) or 
-            (dir_r and game.is_collision(point_d)),
+        #     # Danger right
+        #     (dir_u and game.is_collision(point_r)) or 
+        #     (dir_d and game.is_collision(point_l)) or 
+        #     (dir_l and game.is_collision(point_u)) or 
+        #     (dir_r and game.is_collision(point_d)),
 
-            # Danger left
-            (dir_d and game.is_collision(point_r)) or 
-            (dir_u and game.is_collision(point_l)) or 
-            (dir_r and game.is_collision(point_u)) or 
-            (dir_l and game.is_collision(point_d)),
+        #     # Danger left
+        #     (dir_d and game.is_collision(point_r)) or 
+        #     (dir_u and game.is_collision(point_l)) or 
+        #     (dir_r and game.is_collision(point_u)) or 
+        #     (dir_l and game.is_collision(point_d)),
             
-            # Move direction (only 1 is true)
-            dir_l,
-            dir_r,
-            dir_u,
-            dir_d,
+        #     # Move direction (only 1 is true)
+        #     dir_l,
+        #     dir_r,
+        #     dir_u,
+        #     dir_d,
             
-            # Food location (only 1-2 are true)
-            game.food.x < game.head.x,  # food left
-            game.food.x > game.head.x,  # food right
-            game.food.y < game.head.y,  # food up
-            game.food.y > game.head.y  # food down
-            ]
-        ##### 
-        print(np.array(state, dtype=int)[0:3])
-        num_blocks_visibility = 1
+        #     # Food location (only 1-2 are true)
+        #     game.food.x < game.head.x,  # food left
+        #     game.food.x > game.head.x,  # food right
+        #     game.food.y < game.head.y,  # food up
+        #     game.food.y > game.head.y  # food down
+        #     ]
+
+        num_blocks_visibility = 3  # snake finds danger 3 blocks away, instead of 1
         state = [ 
-            # snake only finds out danger one block away... TODO V2.x  
-            # Danger straight 
+            # Danger straight (relative to snake)
             self.danger_dir(game, "S", num_blocks_visibility),
-            # Danger right
+            # Danger right (relative to snake)
             self.danger_dir(game, "R", num_blocks_visibility),
-            # Danger left
+            # Danger left (relative to snake)
             self.danger_dir(game, "L", num_blocks_visibility),
-
-            # Move direction (only 1 is true)
-            dir_l,
-            dir_r,
-            dir_u,
-            dir_d,
-            
-            # Food location (only 1-2 are true)
-            game.food.x < game.head.x,  # food left
-            game.food.x > game.head.x,  # food right
-            game.food.y < game.head.y,  # food up
-            game.food.y > game.head.y  # food down
+            # Compass Snake Move direction (was 4 diff neurons, now encoded into 1)
+            game.direction.value/2 - 1.25,   # \in [-0.75, -0.5, 0.5, 0.75] 
+            # Compass Food location (was 4 diff neurons, now encoded into 1)
+            self.enc_food(game.food, game.head)
         ]
-        print(np.array(state, dtype=float)[0:3])
 
-        #####
-        return np.array(state, dtype=int)   # convert T/F list to 0/1s
+        return np.array(state, dtype=float) 
         
     # popleft if deque_len is reached --> only remember deque_len frames
     def remember(self, state, action, reward, next_state, done):

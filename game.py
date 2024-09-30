@@ -9,10 +9,10 @@ font = pygame.font.Font('arial.ttf', 25)
 #font = pygame.font.SysFont('arial', 25)
 
 class Direction(Enum):
-    RIGHT = 1
-    LEFT = 2
-    UP = 3
-    DOWN = 4
+    RIGHT = 1  # East
+    DOWN = 2   # South
+    LEFT = 3   # West
+    UP = 4     # North
 
 # just a regular tuple, but print(Point(1,1)) --> Point(x=1, y=1)
 Point = namedtuple('Point', 'x, y')  
