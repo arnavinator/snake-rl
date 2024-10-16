@@ -5,16 +5,16 @@ import pickle
 
 # hyperparams to explore
 hyperparams = {
-    'MAX_MEMORY'      : [5_000, 10_000],    # 10k: remember ~15-20 games
-    'BATCH_SIZE'      : [500, 1000],
+    'MAX_MEMORY'      : [5_000, 10_000],    # 10k: remember last ~15-20 games
+    'BATCH_SIZE'      : [500],
     'ALPHA'           : [0.001],
-    'ALPHA_DECAY'     : [True, False],
+    'ALPHA_DECAY'     : [True],
     'GAMMA'           : [0.7],
     'EPSILON'         : [0.3, 0.4],    
     'EPSILON_FLOOR'   : [0.0],              # minimal epsilon value after decay
     'EPSILON_LIN_DEC' : [False],            # epsilon decay is linear or exp
     'EPSILON_DEC_LIM' : [60, 80],           # number of games until minimal epsilon
-    'PRI_REPLAY_EN'   : [True, False],      # priority replay buffer at end of every episode
+    'PRI_REPLAY_EN'   : [True],             # priority replay buffer at end of every episode
 }
 
 total = 1
@@ -65,10 +65,11 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             try:
                 result = finished_trainer.result()  # save results
                 print(f"  {str(agent_t)} completed")
+                print(result)
                 results[str(agent_t)] = result
             except Exception as e:
                 print(f"  {str(agent_t)} generated an exception: {e}")
         
 print("All results saved to results.pkl")
-with open('results.pkl', 'wb') as pickle_file:
+with open('results_2p0.pkl', 'wb') as pickle_file:
     pickle.dump(results, pickle_file)

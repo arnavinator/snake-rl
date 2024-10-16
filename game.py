@@ -98,14 +98,19 @@ class SnakeGameAI:
         self.snake.insert(0, self.head)
         
         # Reward: +10 if food, -10 if game_over, else 0
-        # 3. check if game over (collision OR its been 100*len(self.snake) frames)
+        # 3a. check if game over (collision OR its been 100*len(self.snake) frames)
         reward = 0
         game_over = False
         if self.is_collision() or self.frame_iteration > 100*len(self.snake):
             game_over = True
             reward = -10
             return reward, game_over, self.score
-
+        # 3b. check if game over (collision OR its been 100*len(self.snake) frames)
+        if self.frame_iteration > 100*len(self.snake):
+            game_over = True
+            reward = 0
+            return reward, game_over, self.score
+        
         # 4. place new food or just move
         if self.head == self.food:
             self.score += 1

@@ -5,8 +5,14 @@ import numpy as np
 # list: dynamic array, so O(n) for LHS pop, O(1) for index
 from collections import deque
 from game import SnakeGameAI, Direction, Point
-from model import QNet, QTrainer
+from model import QNet
 from helper import plot
+
+# # set random seed
+# seed = 1298734123
+# random.seed(seed)            
+# np.random.seed(seed)      
+# torch.manual_seed(seed) 
 
 # Agent() Training params
 MAX_MEMORY      = 10_000
@@ -45,7 +51,8 @@ class Agent:
 
         self.memory = deque(maxlen=deque_len)
         self.model = QNet(self.num_blocks_visibility)
-        self.trainer = QTrainer(self.model, alpha=alpha, alpha_decay=alpha_decay, gamma=gamma)
+        self.model.load_state_dict(torch.load("./model/model.pth"))
+        self.model.eval()
         
         if self.eps_lin_decay:
             self.epsilon = epsilon 
@@ -206,119 +213,18 @@ class Agent:
 
             
     def get_state(self, game):
-
-        # new_state = np.array([ 
-        #     # NEW STUFF
-        #     game.score / 100,   # snake len
-        #     np.abs(game.food.x - game.head.x) / game.w,   # dist from food in x
-        #     np.abs(game.food.y - game.head.y) / game.h,
-        #     self.danger_dist(game=game, relative_danger_dir="S", num_blocks_visibility=10),
-        #     self.danger_dist(game=game, relative_danger_dir="L", num_blocks_visibility=10),
-        #     self.danger_dist(game=game, relative_danger_dir="R", num_blocks_visibility=10),
-        # ], dtype=float)
-
         compass_s = self.food_view(game)
-
-        # compass_s = np.concat((compass_s, new_state), axis=0)    
-
         visisbility_s = self.danger_view(game)  # Danger view --- 2D array
-
         return (compass_s, visisbility_s) 
-        
-    # popleft if deque_len is reached --> only remember deque_len frames
-    def remember(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state, done)) # deque of tuples
-
-    # train once every frame
-    def train_short_memory(self, state, action, reward, next_state, done):
-        self.trainer.train_step(state, action, reward, next_state, done)
-
-    # train BATCH_SIZE when game_over
-    def train_long_memory(self):
-        # if len(memory) > self.train_batch_size, take rand sample for train_long
-        if len(self.memory) > self.train_batch_size: 
-            mini_sample = random.sample(self.memory, self.train_batch_size) # list of tuples
-        else:
-            mini_sample = self.memory
-        
-        # group together all (states, ..., dones) from mini_sample
-        #   into (BATCH_SIZE, {original len})
-        states, actions, rewards, next_states, dones = zip(*mini_sample)
-        
-        # train on BATCH_SIZE sample. 
-        self.trainer.train_step(states, actions, rewards, next_states, dones)
-        
-    # train BATCH_SIZE when game_over, with priority to end frames
-    def train_priority_long_memory(self, n_end_frames, pri_end_rewards, positive_reward):
-        end_frames = [self.memory[i] for i in range(-n_end_frames, 0)]  # make sure last few frames are used
-        # if len(memory) > self.train_batch_size-n_end_frames, take rand sample for train_long
-        if len(self.memory) > (self.train_batch_size-n_end_frames): 
-            mini_sample = random.sample(self.memory, (self.train_batch_size-n_end_frames)) # list of tuples
-            mini_sample += end_frames   # concatenate to make mini_sample
-        else:
-            mini_sample = self.memory
-        
-        # group together all (states, ..., dones) from mini_sample
-        #   into (BATCH_SIZE, {original len})
-        states, actions, rewards, next_states, dones = zip(*mini_sample)
-
-        # near end-of-game rewards (snake bites itself) slightly penalized!
-        if pri_end_rewards:
-            rewards = np.array(rewards)
-            r_tail = rewards[-n_end_frames:]
-            # check that none of the last n_end_frames was reward of any kind
-            check_reward = np.where(r_tail != 0)[0]
-            if check_reward.size == 0: # no reward here in window
-                idx = None  
-                steps = n_end_frames
-            else:
-                idx = check_reward[-1]  # most recent reward
-                steps = n_end_frames - (idx+1)
-
-            # modify rewards, only if room to modify
-            if steps != 0:
-                # values to between 0 and +/-10, exponentially decr over steps intervals 
-                exponential_values = np.logspace(-1, 0, num=steps)
-                if positive_reward:
-                    scaled_values = exponential_values * 10
-                else:
-                    scaled_values = exponential_values * -10
-                # modify rewards
-                rewards = np.concat((rewards[:-steps], scaled_values), axis=0)   
-
-            # now let's store these modified rewards back into memory (so can be resampled) 
-            # end-of-game entries are at end of mini sample 
-            #   --> pop them off, rezip end of mini sample with revised rewards, update memory      
-            for i in range(steps):  # remove the entries we want to revise
-                self.memory.pop()
-            self.memory += deque(zip(states[-steps:], actions[-steps:], rewards[-steps:], next_states[-steps:], dones[-steps:]))
-
-        # train on BATCH_SIZE sample. 
-        #   convert list of nparray to single nparray, faster tensor conversion
-        self.trainer.train_step(states, actions, rewards, next_states, dones)
-
-    # called once every game over
-    def update_epsilon(self):
-        # epsilon-rand: linear/exp decay to eps_floor% after n_games_eps_decay games
-        if (self.n_games <= self.n_games_eps_decay):
-            if self.eps_lin_decay: # linear decay 
-                self.epsilon -= self.eps_step  
-            else:
-                self.epsilon *= self.eps_step
-        else:
-            self.epsilon = 0
-
+                
     # epsilon-greedy action 
     def get_action(self, state):        
-        if (torch.rand(1, dtype=torch.float16) < self.epsilon).item():  # exploration
-            move = random.randint(0, 2)
-        else:  # exploitation 
-            # state (11-dim) --> model --> Q(s) (3-dim)
-            self.model.eval()
-            with torch.no_grad():
-                prediction = self.model(state)
-            # pick action yielding highest Q 
-            move = torch.argmax(prediction).item()
+        # exploitation 
+        # state (11-dim) --> model --> Q(s) (3-dim)
+        with torch.no_grad():
+            prediction = self.model(state)
+        # pick action yielding highest Q 
+        move = torch.argmax(prediction).item()
         
         final_move = [0,0,0] 
         final_move[move] = 1 # one-hot action
@@ -342,7 +248,6 @@ class AgentTrainer:
         self.track_efficiency = []
         self.record = 0
         self.total_num_frames = 0
-        self.model_loss = []
         self.agent = Agent(deque_len, train_batch_size, alpha, alpha_decay, gamma, epsilon, 
                            eps_floor, eps_lin_decay, eps_dec_lim)
         self.game = SnakeGameAI(BLOCK_SIZE=block_sz, SPEED=speed_fps, interactive_mode=interactive_mode)
@@ -357,7 +262,7 @@ class AgentTrainer:
         golden_frame_cnt = m_x_dist + m_y_dist
         return golden_frame_cnt
 
-    def train(self):    
+    def inference(self):    
         # init current_state
         current_state = self.agent.get_state(self.game)
 
@@ -367,7 +272,7 @@ class AgentTrainer:
         start_frame_count = 0
         ideal_frame_cnt = self.find_frame_goal()
 
-        while (not self.game.quit) and (self.agent.n_games < 120):
+        while (not self.game.quit) and (self.agent.n_games < 10):
             # get current state
             if current_state is None:
                 current_state = self.agent.get_state(self.game)
@@ -379,14 +284,11 @@ class AgentTrainer:
             reward, done, score = self.game.play_step(new_move)
             new_state = self.agent.get_state(self.game)
 
-            # train short memory (every frame) # deprecated
-            # self.agent.train_short_memory(current_state, new_move, reward, new_state, done)
-
             # remember, for train_long_memory()
-            self.agent.remember(current_state, new_move, reward, new_state, done)
+            # self.agent.remember(current_state, new_move, reward, new_state, done)
 
-            if (self.total_num_frames+2) % 4 == 0:
-                self.agent.train_long_memory()
+            # if (self.total_num_frames+2) % 4 == 0:
+            #     self.agent.train_long_memory()
 
             # for next iter in game (no need to recalc current_state)
             current_state = new_state
@@ -397,43 +299,24 @@ class AgentTrainer:
                 frame_checkpoint = self.total_num_frames
                 golden_frame_cnt = self.find_frame_goal()
                 ideal_frame_cnt += golden_frame_cnt
-                if self.pri_replay_en:  
-                    n_end_frames = 7
-                    if self.agent.n_games >= 35:   # once snake starts biting itself, penalize end states
-                        self.agent.train_priority_long_memory(n_end_frames=n_end_frames, pri_end_rewards=False, positive_reward=True)
-
 
             self.total_num_frames += 1
     
             if done:  # aka game_over
+                if score > self.record:
+                    self.record = score
+
                 # train long memory, plot result
                 self.game.reset()
                 self.agent.n_games += 1
 
-                if score > self.record:
-                    self.record = score
-                    if self.interactive_mode:
-                        self.agent.model.save()
-
-                loss = self.agent.trainer.loss.item()
                 if self.interactive_mode:
-                    print('Game:', self.agent.n_games, '\tScore:', score, '\tRecord:', self.record, '\tReplay Loss:', round(loss, 4))
-                
-                if self.pri_replay_en:  
-                    n_end_frames = 7
-                    if self.agent.n_games < 35:   # once snake starts biting itself, penalize end states
-                        self.agent.train_priority_long_memory(n_end_frames=n_end_frames, pri_end_rewards=False, positive_reward=False)
-                    else:
-                        self.agent.train_priority_long_memory(n_end_frames=n_end_frames, pri_end_rewards=True, positive_reward=False)
-
-                self.agent.trainer.step_alpha_scheduler()
-                self.agent.update_epsilon()
+                    print('Game:', self.agent.n_games, '\tScore:', score, '\tRecord:', self.record)
 
                 # --- update plot metrics --- 
                 self.track_scores.append(score)
                 score_slice = self.track_scores[-5:]  # 5-game simple moving avg
                 self.track_ma_scores.append(sum(score_slice) / len(score_slice))
-                self.model_loss.append(loss)
                 if score == 0 or (frame_checkpoint-start_frame_count == 0):  # clamp in case food spawn at head --> divby0
                     efficiency = 0
                 else:
@@ -457,12 +340,10 @@ class AgentTrainer:
             print("Total Number of Frames:                            ",self.total_num_frames)
             print("Total Number of Games:                             ", self.agent.n_games)
             print("Record Length:                                     ", self.record)
-            print("Average Score across Games:                        ", sum(self.track_scores)/len(self.track_scores) )
-            print("Mean(Last 20 Games Length):                        ", np.mean(self.track_scores[-20:]) )
-            print("Stdev(Last 20 Games Length):                       ", np.std(self.track_scores[-20:]) )
-            print("Mean(Efficiency Score(Last 20 Games Length)):      ", np.mean(self.track_efficiency[-20:]) )
-            print("Stdev(Efficiency Score(Last 20 Games Length)):     ", np.std(self.track_efficiency[-20:]) )
-            print("Mean(QNet Replay Loss(Last 10 games)):             ", np.mean(self.model_loss[-10:]))
+            print("Mean(Last 10 Games Length):                        ", np.mean(self.track_scores[-10:]) )
+            print("Stdev(Last 10 Games Length):                       ", np.std(self.track_scores[-10:]) )
+            print("Mean(Efficiency Score(Last 10 Games Length)):      ", np.mean(self.track_efficiency[-10:]) )
+            print("Stdev(Efficiency Score(Last 10 Games Length)):     ", np.std(self.track_efficiency[-10:]) )
             print("Training Over. Close Plot to terminate program.")
             plot(self.track_scores, self.track_ma_scores, self.track_efficiency, show_final=True)
         else:
@@ -470,16 +351,14 @@ class AgentTrainer:
             results["Total Number of Frames"]                           = self.total_num_frames
             results["Total Number of Games"]                            = self.agent.n_games
             results["Record Length"]                                    = self.record
-            results["Average Score across Games"]                       = sum(self.track_scores)/len(self.track_scores)
-            results["Mean(Last 20 Games Length)"]                       = np.mean(self.track_scores[-20:])
-            results["Stdev(Last 20 Games Length)"]                      = np.std(self.track_scores[-20:])
-            results["Mean(Efficiency Score(Last 20 Games Length))"]     = np.mean(self.track_efficiency[-20:])
-            results["Stdev(Efficiency Score(Last 20 Games Length))"]    = np.std(self.track_efficiency[-20:])
+            results["Mean(Last 10 Games Length)"]                       = np.mean(self.track_scores[-10:])
+            results["Stdev(Last 10 Games Length)"]                      = np.std(self.track_scores[-10:])
+            results["Mean(Efficiency Score(Last 10 Games Length))"]     = np.mean(self.track_efficiency[-10:])
+            results["Stdev(Efficiency Score(Last 10 Games Length))"]    = np.std(self.track_efficiency[-10:])
             # # in case want to plot results 
             # results["Data: Length per Game"] = self.track_scores
             # results["Data: 5-game Length Moving Average"] = self.track_ma_scores
             # results["Data: Efficiency Score"] = self.track_efficiency
-            # results["Data: QNet Replay Loss"] = self.model_loss
 
             return results
 
@@ -512,6 +391,6 @@ if __name__ == '__main__':
         pri_replay_en=h_comb['PRI_REPLAY_EN'],
         interactive_mode=True)
     
-    agent_trainer.train()
+    agent_trainer.inference()
 
 
