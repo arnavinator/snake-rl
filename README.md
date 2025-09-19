@@ -1,4 +1,4 @@
-## Intro
+## Overview
 
 This repo instantiates a Deep-Q-Network (DQN) Reinforcement Learning (RL) agent to play the game Snake. The original infrastructure is sourced from patrickloeber/snake-ai-pytorch (thanks!).
 
@@ -18,3 +18,10 @@ On the right hand side is the *Improved Performance* (performance after changes 
 <br><br>
 
 The learned policy is better performing at the cost of learning to be more cautious: the snake efficiency slightly decreases in the improved veresion, as the original agent was lower-scoring but more efficient (took more direct paths to the food) whereas the improved agent snake learns a different policy with a lower efficiency score albeit much higher scoring (learning to be more cautious about getting trapped in a loop and killing itself).
+
+## Codebase
+proj/agent_train_pipeline.py
+* Instantiates multiple instances of *AgentTrainer* class specified in proj/agent.py
+* Allows for multi-threaded hyperparameter optimization
+
+
