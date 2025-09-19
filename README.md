@@ -7,7 +7,7 @@ This project was completed to understand DQN from the ground-up while aiming to 
 As a result of code improvements (training recipe and model architecture changes), the snake agent is **~2x more performant** than the base version, as shown below.
 
 <p align="center">
-  <img src="./imgs/perf_comparision.png" class="img-fluid center-image" style="width: 50%;">
+  <img src="./imgs/perf_comparision.png" class="img-fluid center-image" style="width: 80%;">
 </p>
 On the left hand side is the <em>Base Performance</em> (performance of patrickloeber/snake-ai-pytorch).
 <br>
