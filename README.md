@@ -1,13 +1,13 @@
 ## Overview
 
-This repo instantiates a Deep-Q-Network (DQN) Reinforcement Learning (RL) agent to play the game Snake. The original infrastructure is sourced from patrickloeber/snake-ai-pytorch (thanks!).
+This repo instantiates a Deep-Q-Network (DQN) Reinforcement Learning (RL) agent to play the game Snake. It **signficantly improves/outperforms the baseline implementation**, which is sourced from patrickloeber/snake-ai-pytorch (thanks!).
 
 This project was completed to understand DQN from the ground-up while aiming to make the RL agent more performant.
 
 As a result of code improvements (training recipe and model architecture changes), the snake agent is **~2x more performant** than the base version, as shown below.
 
 <p align="center">
-  <img src="./imgs/perf_comparision.png" class="img-fluid center-image" style="width: 50%;">
+  <img src="./imgs/perf_comparision.png" class="img-fluid center-image" style="width: 80%;">
 </p>
 On the left hand side is the <em>Base Performance</em> (performance of patrickloeber/snake-ai-pytorch).
 <br>

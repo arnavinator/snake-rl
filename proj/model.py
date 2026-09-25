@@ -109,7 +109,7 @@ class QTrainer:
             else:
                 Q_new = reward[idx]  # no next action exists
 
-            # update Q(s,a)
+            # update target Q(s,a): only modify index of pred corresponding to action taken by agent from off-policy data collection 
             target[idx][torch.argmax(action[idx]).item()] = Q_new
 
         self.optimizer.zero_grad()
