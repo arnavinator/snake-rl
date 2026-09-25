@@ -102,8 +102,10 @@ class QTrainer:
             # for DQN, alpha=1 (compensated by optimizer learning rate)
             # Q(s,a) <- R + gamma*max_a'(Q(s',a')) 
             if not done[idx]:
-                # next_state was chosen via max_a', so max_a'(Q(s',a')) == max(Q(next_state))
-                Q_new = reward[idx] + self.gamma * torch.max(self.model(next_state[idx]))
+                # we don't want gradient flowing thru self.model via target, we want Q(s,a) toward the target and not backwards
+                with torch.no_grad():
+                    # next_state was chosen via max_a', so max_a'(Q(s',a')) == max(Q(next_state))
+                    Q_new = reward[idx] + self.gamma * torch.max(self.model(next_state[idx]))
             else:
                 Q_new = reward[idx]  # no next action exists
 
